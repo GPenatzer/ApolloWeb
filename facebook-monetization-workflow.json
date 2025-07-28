@@ -1,0 +1,754 @@
+{
+  "name": "Facebook AI Monetization Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "value": "0 9,13,17 * * *"
+            }
+          ]
+        }
+      },
+      "id": "scheduler",
+      "name": "Content Scheduler",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-4"
+            },
+            {
+              "name": "messages",
+              "value": "={{[\n  {\n    \"role\": \"system\",\n    \"content\": \"You are an expert content creator for social media. Create engaging Facebook posts that include: 1) A compelling hook, 2) Valuable information, 3) A subtle call-to-action, 4) Relevant hashtags. Focus on topics: personal finance, productivity, health & wellness, online business. Include affiliate product recommendations naturally.\"\n  },\n  {\n    \"role\": \"user\",\n    \"content\": \"Create a Facebook post about {{ $json.topic || 'building passive income streams' }}. Include a natural recommendation for a relevant affiliate product. Make it engaging and valuable.\"\n  ]\n]}}"
+            },
+            {
+              "name": "max_tokens",
+              "value": 500
+            },
+            {
+              "name": "temperature",
+              "value": 0.8
+            }
+          ]
+        }
+      },
+      "id": "content_generator",
+      "name": "AI Content Generator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [400, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai_credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract content from OpenAI response and add metadata\nconst aiResponse = $input.first().json;\nconst content = aiResponse.choices[0].message.content;\n\n// Parse content to extract different sections\nconst lines = content.split('\\n').filter(line => line.trim());\nconst mainContent = lines.slice(0, -2).join('\\n');\nconst hashtags = lines[lines.length - 1];\n\n// Add tracking parameters and affiliate links\nconst affiliateLinks = {\n  'productivity': 'https://amzn.to/3ProductivityBook?tag=youraffid-20',\n  'finance': 'https://amzn.to/3FinanceBook?tag=youraffid-20',\n  'health': 'https://amzn.to/3HealthBook?tag=youraffid-20',\n  'business': 'https://amzn.to/3BusinessBook?tag=youraffid-20'\n};\n\n// Generate unique tracking ID\nconst trackingId = `fb_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\n\n// Create final post content\nconst finalContent = `${mainContent}\\n\\n💡 Learn more: ${affiliateLinks.business}\\n\\n${hashtags}\\n\\n#TrackingID: ${trackingId}`;\n\nreturn {\n  content: finalContent,\n  trackingId: trackingId,\n  timestamp: new Date().toISOString(),\n  topic: 'passive income',\n  affiliateLink: affiliateLinks.business\n};"
+      },
+      "id": "content_processor",
+      "name": "Content Processor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/generations",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "prompt",
+              "value": "=Create a professional, eye-catching social media image for a post about {{ $json.topic }}. Style: modern, clean, motivational. Include elements related to success, growth, and achievement. No text overlay needed."
+            },
+            {
+              "name": "n",
+              "value": 1
+            },
+            {
+              "name": "size",
+              "value": "1024x1024"
+            }
+          ]
+        }
+      },
+      "id": "image_generator",
+      "name": "AI Image Generator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [600, 500],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai_credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $vars.facebook_page_id }}/photos",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $vars.facebook_access_token }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $('Content Processor').item.json.content }}"
+            },
+            {
+              "name": "url",
+              "value": "={{ $('AI Image Generator').item.json.data[0].url }}"
+            },
+            {
+              "name": "published",
+              "value": "true"
+            }
+          ]
+        }
+      },
+      "id": "facebook_poster",
+      "name": "Facebook Poster",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "content_analytics",
+        "columns": "post_id, content, tracking_id, timestamp, platform, affiliate_link, image_url",
+        "values": "={{ $json.id }}, {{ JSON.stringify($('Content Processor').item.json.content) }}, {{ $('Content Processor').item.json.trackingId }}, {{ $('Content Processor').item.json.timestamp }}, 'facebook', {{ $('Content Processor').item.json.affiliateLink }}, {{ $('AI Image Generator').item.json.data[0].url }}"
+      },
+      "id": "analytics_logger",
+      "name": "Analytics Logger",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1000, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres_credentials",
+          "name": "Analytics Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $vars.facebook_page_id }}/subscribed_apps",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $vars.facebook_access_token }}"
+            },
+            {
+              "name": "subscribed_fields",
+              "value": "feed,posts"
+            }
+          ]
+        }
+      },
+      "id": "webhook_setup",
+      "name": "Setup Facebook Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [200, 100]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "facebook-webhook",
+        "responseMode": "responseNode"
+      },
+      "id": "webhook_listener",
+      "name": "Facebook Webhook Listener",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [200, 600],
+      "webhookId": "facebook-engagement-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Facebook webhook data for engagement tracking\nconst webhookData = $input.first().json;\n\nif (webhookData.entry && webhookData.entry[0].changes) {\n  const changes = webhookData.entry[0].changes;\n  \n  for (const change of changes) {\n    if (change.field === 'feed' && change.value) {\n      const value = change.value;\n      \n      // Track different engagement types\n      if (value.verb === 'add' && value.item === 'comment') {\n        return {\n          type: 'comment',\n          postId: value.post_id,\n          userId: value.from?.id,\n          message: value.message,\n          timestamp: new Date().toISOString()\n        };\n      }\n      \n      if (value.verb === 'add' && value.item === 'like') {\n        return {\n          type: 'like',\n          postId: value.post_id,\n          userId: value.from?.id,\n          timestamp: new Date().toISOString()\n        };\n      }\n      \n      if (value.verb === 'add' && value.item === 'share') {\n        return {\n          type: 'share',\n          postId: value.post_id,\n          userId: value.from?.id,\n          timestamp: new Date().toISOString()\n        };\n      }\n    }\n  }\n}\n\nreturn null;"
+      },
+      "id": "engagement_processor",
+      "name": "Engagement Processor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "comment_filter",
+              "leftValue": "={{ $json.type }}",
+              "rightValue": "comment",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "comment_filter",
+      "name": "Comment Filter",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-4"
+            },
+            {
+              "name": "messages",
+              "value": "={{[\n  {\n    \"role\": \"system\",\n    \"content\": \"You are a helpful social media manager. Respond to comments in a friendly, engaging way. If the comment shows interest in learning more, provide a subtle call-to-action to visit the bio link or DM for more info. Keep responses under 50 words.\"\n  },\n  {\n    \"role\": \"user\",\n    \"content\": \"Respond to this Facebook comment: {{ $json.message }}\"\n  }\n]}}"
+            },
+            {
+              "name": "max_tokens",
+              "value": 100
+            },
+            {
+              "name": "temperature",
+              "value": 0.7
+            }
+          ]
+        }
+      },
+      "id": "auto_responder",
+      "name": "AI Auto Responder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [800, 700],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai_credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $('Engagement Processor').item.json.postId }}/comments",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $vars.facebook_access_token }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.choices[0].message.content }}"
+            }
+          ]
+        }
+      },
+      "id": "comment_poster",
+      "name": "Post Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1000, 700]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "lead_interactions",
+        "columns": "user_id, post_id, interaction_type, message, timestamp, response_sent",
+        "values": "={{ $('Engagement Processor').item.json.userId }}, {{ $('Engagement Processor').item.json.postId }}, {{ $('Engagement Processor').item.json.type }}, {{ JSON.stringify($('Engagement Processor').item.json.message || '') }}, {{ $('Engagement Processor').item.json.timestamp }}, true"
+      },
+      "id": "lead_tracker",
+      "name": "Lead Tracker",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1200, 700],
+      "credentials": {
+        "postgres": {
+          "id": "postgres_credentials",
+          "name": "Analytics Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "value": "0 8 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "weekly_analyzer",
+      "name": "Weekly Analytics",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 900]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  COUNT(*) as total_posts,\n  COUNT(DISTINCT post_id) as unique_posts,\n  platform,\n  DATE_TRUNC('week', timestamp::timestamp) as week\nFROM content_analytics \nWHERE timestamp >= NOW() - INTERVAL '7 days'\nGROUP BY platform, week;\n\nSELECT \n  COUNT(*) as total_interactions,\n  interaction_type,\n  COUNT(DISTINCT user_id) as unique_users\nFROM lead_interactions \nWHERE timestamp >= NOW() - INTERVAL '7 days'\nGROUP BY interaction_type;"
+      },
+      "id": "analytics_query",
+      "name": "Analytics Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [400, 900],
+      "credentials": {
+        "postgres": {
+          "id": "postgres_credentials",
+          "name": "Analytics Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "table": {
+          "__rl": true,
+          "value": "Weekly Reports",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Week": "={{ new Date().toISOString().slice(0, 10) }}",
+            "Total Posts": "={{ $json[0].total_posts }}",
+            "Total Interactions": "={{ $json[1].total_interactions }}",
+            "Unique Users Engaged": "={{ $json[1].unique_users }}",
+            "Engagement Rate": "={{ Math.round(($json[1].total_interactions / $json[0].total_posts) * 100) }}%"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Week",
+              "displayName": "Week",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Total Posts",
+              "displayName": "Total Posts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Total Interactions",
+              "displayName": "Total Interactions", 
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Unique Users Engaged",
+              "displayName": "Unique Users Engaged",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Engagement Rate",
+              "displayName": "Engagement Rate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "report_generator",
+      "name": "Generate Report",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [600, 900],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google_sheets_credentials",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "your-slack-channel-id",
+          "mode": "list"
+        },
+        "text": "=📊 **Weekly Facebook Analytics Report**\n\n📈 **Performance Summary:**\n• Total Posts: {{ $('Analytics Query').item.json[0].total_posts }}\n• Total Interactions: {{ $('Analytics Query').item.json[1].total_interactions }}\n• Unique Users Engaged: {{ $('Analytics Query').item.json[1].unique_users }}\n• Engagement Rate: {{ Math.round(($('Analytics Query').item.json[1].total_interactions / $('Analytics Query').item.json[0].total_posts) * 100) }}%\n\n🎯 **Revenue Opportunities:**\n• High-engagement posts identified for promotion\n• New leads captured for follow-up\n• Trending topics detected for content planning\n\nFull report: {{ $json.webViewLink }}"
+      },
+      "id": "slack_notifier",
+      "name": "Slack Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [800, 900],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "slack_credentials",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "value": "0 10 * * *"
+            }
+          ]
+        }
+      },
+      "id": "trend_analyzer",
+      "name": "Daily Trend Analysis",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 1200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType", 
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-4"
+            },
+            {
+              "name": "messages",
+              "value": "={{[\n  {\n    \"role\": \"system\",\n    \"content\": \"You are a social media trend analyst. Analyze current trends and suggest 3 profitable content topics for Facebook that could include affiliate marketing opportunities. Format as JSON with topics, rationale, and suggested affiliate product categories.\"\n  },\n  {\n    \"role\": \"user\",\n    \"content\": \"What are the top trending topics today that would be good for Facebook content creation with monetization potential?\"\n  }\n]}}"
+            }
+          ]
+        }
+      },
+      "id": "trend_generator",
+      "name": "Trend Topic Generator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [400, 1200],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai_credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "content_queue",
+        "columns": "topic, priority, suggested_affiliate, created_date, status",
+        "values": "={{ JSON.stringify($json.choices[0].message.content) }}, 'high', 'trending', {{ new Date().toISOString() }}, 'pending'"
+      },
+      "id": "queue_manager",
+      "name": "Content Queue Manager",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [600, 1200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres_credentials",
+          "name": "Analytics Database"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Content Scheduler": {
+      "main": [
+        [
+          {
+            "node": "AI Content Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Content Generator": {
+      "main": [
+        [
+          {
+            "node": "Content Processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Content Processor": {
+      "main": [
+        [
+          {
+            "node": "AI Image Generator",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Facebook Poster",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Image Generator": {
+      "main": [
+        [
+          {
+            "node": "Facebook Poster",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Facebook Poster": {
+      "main": [
+        [
+          {
+            "node": "Analytics Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Facebook Webhook Listener": {
+      "main": [
+        [
+          {
+            "node": "Engagement Processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Engagement Processor": {
+      "main": [
+        [
+          {
+            "node": "Comment Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Comment Filter": {
+      "main": [
+        [
+          {
+            "node": "AI Auto Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Auto Responder": {
+      "main": [
+        [
+          {
+            "node": "Post Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Reply": {
+      "main": [
+        [
+          {
+            "node": "Lead Tracker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Analytics": {
+      "main": [
+        [
+          {
+            "node": "Analytics Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analytics Query": {
+      "main": [
+        [
+          {
+            "node": "Generate Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Report": {
+      "main": [
+        [
+          {
+            "node": "Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Trend Analysis": {
+      "main": [
+        [
+          {
+            "node": "Trend Topic Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trend Topic Generator": {
+      "main": [
+        [
+          {
+            "node": "Content Queue Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "facebook-automation",
+      "name": "Facebook Automation"
+    },
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z", 
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "ai-monetization",
+      "name": "AI Monetization"
+    }
+  ],
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "facebook-ai-monetization-workflow",
+  "versionId": "1.0.0"
+}
