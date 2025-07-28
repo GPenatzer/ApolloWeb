@@ -1,0 +1,638 @@
+{
+  "name": "AI Content Generation & Publishing Module",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "content-generation",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true,
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "webhook-content-request",
+      "name": "Content Request Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "content-generation-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "validate-content-request",
+              "name": "validation",
+              "value": "={{ \n  const required = ['client_name', 'content_type', 'topic', 'target_audience'];\n  const errors = required.filter(field => !$json[field] || $json[field].toString().trim() === '');\n  const supportedTypes = ['blog_post', 'social_media', 'email_newsletter', 'product_description', 'landing_page', 'press_release', 'case_study', 'whitepaper'];\n  \n  if ($json.content_type && !supportedTypes.includes($json.content_type)) {\n    errors.push('content_type');\n  }\n  \n  return {\n    valid: errors.length === 0,\n    errors: errors,\n    sanitized: {\n      client_name: $json.client_name?.toString().trim(),\n      content_type: $json.content_type?.toString().trim(),\n      topic: $json.topic?.toString().trim(),\n      target_audience: $json.target_audience?.toString().trim(),\n      keywords: $json.keywords ? $json.keywords.split(',').map(k => k.trim()) : [],\n      brand_voice: $json.brand_voice?.toString().trim() || 'professional',\n      desired_length: parseInt($json.desired_length) || 1000,\n      purpose: $json.purpose?.toString().trim() || 'educational',\n      call_to_action: $json.call_to_action?.toString().trim() || '',\n      additional_notes: $json.additional_notes?.toString().trim() || '',\n      seo_focus: $json.seo_focus === 'true' || $json.seo_focus === true,\n      include_images: $json.include_images === 'true' || $json.include_images === true,\n      created_at: new Date().toISOString(),\n      request_id: $workflow.id + '-' + $runIndex + '-' + Date.now()\n    }\n  };\n}}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "validate-content-request",
+      "name": "Validate Content Request",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid-request",
+              "leftValue": "={{ $json.validation.valid }}",
+              "rightValue": true,
+              "operator": "equal"
+            }
+          ],
+          "combineOperation": "any"
+        }
+      },
+      "id": "validation-gate",
+      "name": "Validation Gate",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": false,\n  \"error\": \"Invalid content request\",\n  \"missing_fields\": $json.validation.errors,\n  \"required_fields\": [\"client_name\", \"content_type\", \"topic\", \"target_audience\"],\n  \"supported_content_types\": [\"blog_post\", \"social_media\", \"email_newsletter\", \"product_description\", \"landing_page\", \"press_release\", \"case_study\", \"whitepaper\"]\n} }}"
+      },
+      "id": "validation-error",
+      "name": "Validation Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4-turbo-preview",
+        "messages": {
+          "messageType": "multipleMessages",
+          "messages": [
+            {
+              "role": "system",
+              "message": "You are an expert content strategist and SEO specialist. Analyze content requirements and create a comprehensive content strategy.\n\nReturn ONLY valid JSON:\n{\n  \"content_strategy\": {\n    \"primary_keyword\": \"string\",\n    \"secondary_keywords\": [\"keyword1\", \"keyword2\"],\n    \"content_pillars\": [\"pillar1\", \"pillar2\"],\n    \"optimal_length\": number,\n    \"readability_target\": \"grade_level\",\n    \"content_structure\": [\"section1\", \"section2\"],\n    \"seo_recommendations\": [\"tip1\", \"tip2\"]\n  },\n  \"audience_analysis\": {\n    \"demographics\": \"string\",\n    \"pain_points\": [\"pain1\", \"pain2\"],\n    \"preferred_tone\": \"string\",\n    \"content_preferences\": [\"format1\", \"format2\"]\n  },\n  \"competitive_insights\": {\n    \"trending_topics\": [\"topic1\", \"topic2\"],\n    \"content_gaps\": [\"gap1\", \"gap2\"],\n    \"differentiation_opportunities\": [\"opp1\", \"opp2\"]\n  }\n}"
+            },
+            {
+              "role": "user",
+              "message": "Analyze this content request:\n\nClient: {{ $json.validation.sanitized.client_name }}\nContent Type: {{ $json.validation.sanitized.content_type }}\nTopic: {{ $json.validation.sanitized.topic }}\nTarget Audience: {{ $json.validation.sanitized.target_audience }}\nKeywords: {{ $json.validation.sanitized.keywords.join(', ') }}\nBrand Voice: {{ $json.validation.sanitized.brand_voice }}\nDesired Length: {{ $json.validation.sanitized.desired_length }} words\nPurpose: {{ $json.validation.sanitized.purpose }}\nSEO Focus: {{ $json.validation.sanitized.seo_focus }}\nAdditional Notes: {{ $json.validation.sanitized.additional_notes }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.4,
+          "maxTokens": 1000,
+          "timeout": 30000
+        }
+      },
+      "id": "content-strategy-analysis",
+      "name": "Content Strategy Analysis",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [900, 400],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetween": 2000
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "parse-strategy",
+              "name": "strategy",
+              "value": "={{ JSON.parse($json) }}",
+              "type": "object"
+            },
+            {
+              "id": "content-brief",
+              "name": "content_brief",
+              "value": "={{ \n  const request = $('validate-content-request').item.json.validation.sanitized;\n  const strategy = JSON.parse($json);\n  return {\n    ...request,\n    strategy: strategy,\n    content_outline: {\n      title_ideas: [],\n      structure: strategy.content_strategy.content_structure,\n      target_keywords: [strategy.content_strategy.primary_keyword, ...strategy.content_strategy.secondary_keywords]\n    }\n  };\n}}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "process-strategy",
+      "name": "Process Content Strategy",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4-turbo-preview",
+        "messages": {
+          "messageType": "multipleMessages",
+          "messages": [
+            {
+              "role": "system",
+              "message": "You are an expert content writer and copywriter. Create high-quality, engaging content based on the provided strategy and brief.\n\nReturn ONLY valid JSON:\n{\n  \"content\": {\n    \"title\": \"string\",\n    \"meta_title\": \"string (max 60 chars)\",\n    \"meta_description\": \"string (max 160 chars)\",\n    \"body\": \"string (formatted with HTML tags)\",\n    \"introduction\": \"string\",\n    \"conclusion\": \"string\",\n    \"key_takeaways\": [\"takeaway1\", \"takeaway2\"]\n  },\n  \"seo_elements\": {\n    \"h1_tag\": \"string\",\n    \"h2_tags\": [\"heading1\", \"heading2\"],\n    \"keyword_density\": number,\n    \"internal_link_suggestions\": [\"link1\", \"link2\"],\n    \"alt_text_suggestions\": [\"alt1\", \"alt2\"]\n  },\n  \"social_variants\": {\n    \"twitter\": \"string (max 280 chars)\",\n    \"linkedin\": \"string\",\n    \"facebook\": \"string\",\n    \"instagram_caption\": \"string\"\n  },\n  \"performance_metrics\": {\n    \"estimated_read_time\": \"string\",\n    \"readability_score\": number,\n    \"engagement_potential\": \"high|medium|low\",\n    \"shareability_score\": number\n  }\n}"
+            },
+            {
+              "role": "user",
+              "message": "Create content based on this brief:\n\nContent Type: {{ $json.content_brief.content_type }}\nTopic: {{ $json.content_brief.topic }}\nTarget Audience: {{ $json.content_brief.target_audience }}\nBrand Voice: {{ $json.content_brief.brand_voice }}\nDesired Length: {{ $json.content_brief.desired_length }} words\nPurpose: {{ $json.content_brief.purpose }}\nCall to Action: {{ $json.content_brief.call_to_action }}\n\nSEO Strategy:\nPrimary Keyword: {{ $json.content_brief.strategy.content_strategy.primary_keyword }}\nSecondary Keywords: {{ $json.content_brief.strategy.content_strategy.secondary_keywords.join(', ') }}\nOptimal Length: {{ $json.content_brief.strategy.content_strategy.optimal_length }} words\nContent Structure: {{ $json.content_brief.strategy.content_strategy.content_structure.join(' -> ') }}\n\nAudience Analysis:\nDemographics: {{ $json.content_brief.strategy.audience_analysis.demographics }}\nPain Points: {{ $json.content_brief.strategy.audience_analysis.pain_points.join(', ') }}\nPreferred Tone: {{ $json.content_brief.strategy.audience_analysis.preferred_tone }}\n\nAdditional Notes: {{ $json.content_brief.additional_notes }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 3000,
+          "timeout": 45000
+        }
+      },
+      "id": "ai-content-generation",
+      "name": "AI Content Generation",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [1340, 400],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetween": 3000
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "parse-content",
+              "name": "generated_content",
+              "value": "={{ JSON.parse($json) }}",
+              "type": "object"
+            },
+            {
+              "id": "final-content-package",
+              "name": "content_package",
+              "value": "={{ \n  const brief = $('process-strategy').item.json.content_brief;\n  const content = JSON.parse($json);\n  return {\n    request_id: brief.request_id,\n    client_name: brief.client_name,\n    content_type: brief.content_type,\n    created_at: brief.created_at,\n    content: content.content,\n    seo_elements: content.seo_elements,\n    social_variants: content.social_variants,\n    performance_metrics: content.performance_metrics,\n    strategy_used: brief.strategy,\n    status: 'generated'\n  };\n}}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "process-generated-content",
+      "name": "Process Generated Content",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "insert",
+        "schema": {
+          "object": {
+            "request_id": "={{ $json.content_package.request_id }}",
+            "client_name": "={{ $json.content_package.client_name }}",
+            "content_type": "={{ $json.content_package.content_type }}",
+            "title": "={{ $json.content_package.content.title }}",
+            "meta_title": "={{ $json.content_package.content.meta_title }}",
+            "meta_description": "={{ $json.content_package.content.meta_description }}",
+            "body": "={{ $json.content_package.content.body }}",
+            "primary_keyword": "={{ $json.content_package.strategy_used.content_strategy.primary_keyword }}",
+            "secondary_keywords": "={{ JSON.stringify($json.content_package.strategy_used.content_strategy.secondary_keywords) }}",
+            "readability_score": "={{ $json.content_package.performance_metrics.readability_score }}",
+            "estimated_read_time": "={{ $json.content_package.performance_metrics.estimated_read_time }}",
+            "status": "generated",
+            "created_at": "={{ $json.content_package.created_at }}"
+          }
+        }
+      },
+      "id": "store-content",
+      "name": "Store Content in Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1560, 500],
+      "retryOnFail": true,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "blog-post",
+              "leftValue": "={{ $json.content_package.content_type }}",
+              "rightValue": "blog_post",
+              "operator": "equal"
+            },
+            {
+              "id": "social-media",
+              "leftValue": "={{ $json.content_package.content_type }}",
+              "rightValue": "social_media",
+              "operator": "equal"
+            },
+            {
+              "id": "email-newsletter",
+              "leftValue": "={{ $json.content_package.content_type }}",
+              "rightValue": "email_newsletter",
+              "operator": "equal"
+            },
+            {
+              "id": "landing-page",
+              "leftValue": "={{ $json.content_package.content_type }}",
+              "rightValue": "landing_page",
+              "operator": "equal"
+            }
+          ],
+          "combineOperation": "any"
+        }
+      },
+      "id": "content-type-router",
+      "name": "Content Type Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "post",
+        "operation": "create",
+        "title": "={{ $json.content_package.content.title }}",
+        "content": "{{ $json.content_package.content.body }}",
+        "additionalFields": {
+          "excerpt": "={{ $json.content_package.content.meta_description }}",
+          "status": "draft",
+          "metaTitle": "={{ $json.content_package.content.meta_title }}",
+          "metaDescription": "={{ $json.content_package.content.meta_description }}"
+        }
+      },
+      "id": "publish-to-wordpress",
+      "name": "Publish Blog to WordPress",
+      "type": "n8n-nodes-base.wordpress",
+      "typeVersion": 1,
+      "position": [2000, 320],
+      "retryOnFail": true,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "text": "{{ $json.content_package.social_variants.twitter }}"
+      },
+      "id": "post-to-twitter",
+      "name": "Post to Twitter",
+      "type": "n8n-nodes-base.twitter",
+      "typeVersion": 2,
+      "position": [2000, 380],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "post",
+        "operation": "create",
+        "text": "{{ $json.content_package.social_variants.linkedin }}"
+      },
+      "id": "post-to-linkedin",
+      "name": "Post to LinkedIn",
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [2000, 440],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "fromEmail": "content@yourcompany.com",
+        "toEmail": "subscribers@yourcompany.com",
+        "subject": "{{ $json.content_package.content.title }}",
+        "message": "{{ $json.content_package.content.body }}",
+        "options": {
+          "contentType": "html"
+        }
+      },
+      "id": "send-newsletter",
+      "name": "Send Email Newsletter",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2000, 500],
+      "retryOnFail": true,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "url": "https://api.webflow.com/sites/YOUR_SITE_ID/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Bearer {{ $credentials.webflow.apiKey }}"
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "={{ $json.content_package.content.title }}"
+            },
+            {
+              "name": "content",
+              "value": "={{ $json.content_package.content.body }}"
+            },
+            {
+              "name": "metaTitle",
+              "value": "={{ $json.content_package.content.meta_title }}"
+            },
+            {
+              "name": "metaDescription",
+              "value": "={{ $json.content_package.content.meta_description }}"
+            }
+          ]
+        }
+      },
+      "id": "create-landing-page",
+      "name": "Create Landing Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 560],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "model": "gpt-4-turbo-preview",
+        "messages": {
+          "messageType": "multipleMessages",
+          "messages": [
+            {
+              "role": "system",
+              "message": "You are a content performance analyst. Analyze the generated content and provide optimization recommendations.\n\nReturn ONLY valid JSON:\n{\n  \"performance_analysis\": {\n    \"content_score\": number (0-100),\n    \"seo_optimization_score\": number (0-100),\n    \"engagement_prediction\": \"high|medium|low\",\n    \"virality_potential\": number (0-100)\n  },\n  \"optimization_recommendations\": {\n    \"title_alternatives\": [\"title1\", \"title2\"],\n    \"content_improvements\": [\"improvement1\", \"improvement2\"],\n    \"seo_enhancements\": [\"enhancement1\", \"enhancement2\"],\n    \"social_media_tips\": [\"tip1\", \"tip2\"]\n  },\n  \"distribution_strategy\": {\n    \"best_posting_times\": [\"time1\", \"time2\"],\n    \"recommended_platforms\": [\"platform1\", \"platform2\"],\n    \"hashtag_suggestions\": [\"#hashtag1\", \"#hashtag2\"],\n    \"influencer_outreach_targets\": [\"target1\", \"target2\"]\n  }\n}"
+            },
+            {
+              "role": "user",
+              "message": "Analyze this generated content:\n\nTitle: {{ $json.content_package.content.title }}\nContent Type: {{ $json.content_package.content_type }}\nWord Count: ~{{ $json.content_package.content.body.split(' ').length }}\nReadability Score: {{ $json.content_package.performance_metrics.readability_score }}\nEstimated Read Time: {{ $json.content_package.performance_metrics.estimated_read_time }}\nPrimary Keyword: {{ $json.content_package.strategy_used.content_strategy.primary_keyword }}\nTarget Audience: {{ $json.content_package.strategy_used.audience_analysis.demographics }}\n\nContent Body (first 500 chars):\n{{ $json.content_package.content.body.substring(0, 500) }}...\n\nSocial Variants:\nTwitter: {{ $json.content_package.social_variants.twitter }}\nLinkedIn: {{ $json.content_package.social_variants.linkedin }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 1000,
+          "timeout": 30000
+        }
+      },
+      "id": "content-performance-analysis",
+      "name": "Content Performance Analysis",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [2220, 400],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "fromEmail": "content-delivery@yourcompany.com",
+        "toEmail": "={{ $('validate-content-request').item.json.validation.sanitized.client_name.toLowerCase().replace(/\\s+/g, '') }}@yourcompany.com",
+        "subject": "✅ Content Ready: {{ $json.content_package.content.title }}",
+        "message": "Dear {{ $('validate-content-request').item.json.validation.sanitized.client_name }},\n\nYour content has been generated and is ready for review!\n\n📝 **CONTENT DETAILS:**\n• Title: {{ $json.content_package.content.title }}\n• Type: {{ $json.content_package.content_type.replace('_', ' ').toUpperCase() }}\n• Word Count: ~{{ $json.content_package.content.body.split(' ').length }} words\n• Read Time: {{ $json.content_package.performance_metrics.estimated_read_time }}\n• SEO Score: {{ $json.content_package.performance_metrics.readability_score }}/100\n\n🎯 **SEO OPTIMIZATION:**\n• Primary Keyword: {{ $json.content_package.strategy_used.content_strategy.primary_keyword }}\n• Meta Title: {{ $json.content_package.content.meta_title }}\n• Meta Description: {{ $json.content_package.content.meta_description }}\n\n📱 **SOCIAL MEDIA READY:**\n• Twitter: ✅ ({{ $json.content_package.social_variants.twitter.length }}/280 chars)\n• LinkedIn: ✅\n• Facebook: ✅\n• Instagram: ✅\n\n📈 **PERFORMANCE PREDICTION:**\n• Engagement Potential: {{ $json.content_package.performance_metrics.engagement_potential.toUpperCase() }}\n• Shareability Score: {{ $json.content_package.performance_metrics.shareability_score }}/100\n\n🔗 **NEXT STEPS:**\n1. Review content in your dashboard\n2. Make any necessary edits\n3. Approve for publishing\n4. Track performance metrics\n\n**Content ID:** {{ $json.content_package.request_id }}\n\nBest regards,\nAI Content Team",
+        "attachments": []
+      },
+      "id": "send-content-notification",
+      "name": "Send Content Delivery Notification",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2440, 400],
+      "retryOnFail": true,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": true,\n  \"message\": \"Content generated and processed successfully\",\n  \"content_id\": $json.content_package.request_id,\n  \"content_type\": $json.content_package.content_type,\n  \"title\": $json.content_package.content.title,\n  \"word_count\": $json.content_package.content.body.split(' ').length,\n  \"readability_score\": $json.content_package.performance_metrics.readability_score,\n  \"estimated_read_time\": $json.content_package.performance_metrics.estimated_read_time,\n  \"engagement_potential\": $json.content_package.performance_metrics.engagement_potential,\n  \"shareability_score\": $json.content_package.performance_metrics.shareability_score,\n  \"publishing_status\": {\n    \"wordpress\": \"draft_created\",\n    \"social_media\": \"posted\",\n    \"email\": $json.content_package.content_type === 'email_newsletter' ? 'sent' : 'not_applicable',\n    \"landing_page\": $json.content_package.content_type === 'landing_page' ? 'created' : 'not_applicable'\n  },\n  \"next_steps\": [\n    \"Review content in dashboard\",\n    \"Approve for final publishing\",\n    \"Monitor performance metrics\",\n    \"Schedule follow-up content\"\n  ]\n} }}"
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2660, 400]
+    }
+  ],
+  "connections": {
+    "webhook-content-request": {
+      "main": [
+        [
+          {
+            "node": "validate-content-request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "validate-content-request": {
+      "main": [
+        [
+          {
+            "node": "validation-gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "validation-gate": {
+      "main": [
+        [
+          {
+            "node": "content-strategy-analysis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "validation-error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "content-strategy-analysis": {
+      "main": [
+        [
+          {
+            "node": "process-strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "process-strategy": {
+      "main": [
+        [
+          {
+            "node": "ai-content-generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ai-content-generation": {
+      "main": [
+        [
+          {
+            "node": "process-generated-content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "process-generated-content": {
+      "main": [
+        [
+          {
+            "node": "content-type-router",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "store-content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "content-type-router": {
+      "main": [
+        [
+          {
+            "node": "publish-to-wordpress",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "post-to-twitter",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "post-to-linkedin",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "send-newsletter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "create-landing-page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "publish-to-wordpress": {
+      "main": [
+        [
+          {
+            "node": "content-performance-analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "post-to-twitter": {
+      "main": [
+        [
+          {
+            "node": "content-performance-analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "send-newsletter": {
+      "main": [
+        [
+          {
+            "node": "content-performance-analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "create-landing-page": {
+      "main": [
+        [
+          {
+            "node": "content-performance-analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "content-performance-analysis": {
+      "main": [
+        [
+          {
+            "node": "send-content-notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "send-content-notification": {
+      "main": [
+        [
+          {
+            "node": "success-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-01-27T12:00:00.000Z",
+  "updatedAt": "2025-01-27T12:00:00.000Z",
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "version": "1.0.0"
+  },
+  "id": "content-generation-publishing-module",
+  "versionId": "1"
+}
