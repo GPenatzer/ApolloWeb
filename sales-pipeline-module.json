@@ -1,0 +1,569 @@
+{
+  "name": "AI Sales Pipeline Automation Module",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-processing",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true,
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "webhook-lead-intake",
+      "name": "Lead Intake Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "lead-processing-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "validate-lead-data",
+              "name": "validation",
+              "value": "={{ \n  const required = ['email', 'name'];\n  const errors = required.filter(field => !$json[field] || $json[field].toString().trim() === '');\n  return {\n    valid: errors.length === 0,\n    errors: errors,\n    sanitized: {\n      name: $json.name?.toString().trim(),\n      email: $json.email?.toString().toLowerCase().trim(),\n      company: $json.company?.toString().trim() || 'Unknown',\n      title: $json.title?.toString().trim() || 'Unknown',\n      phone: $json.phone?.toString().trim() || '',\n      source: $json.source?.toString().trim() || 'direct',\n      utm_source: $json.utm_source || '',\n      utm_campaign: $json.utm_campaign || '',\n      utm_medium: $json.utm_medium || '',\n      created_at: new Date().toISOString(),\n      lead_id: $workflow.id + '-' + $runIndex + '-' + Date.now()\n    }\n  };\n}}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "validate-lead",
+      "name": "Validate & Sanitize Lead",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid-lead",
+              "leftValue": "={{ $json.validation.valid }}",
+              "rightValue": true,
+              "operator": "equal"
+            }
+          ],
+          "combineOperation": "any"
+        }
+      },
+      "id": "validation-gate",
+      "name": "Validation Gate",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": false,\n  \"error\": \"Invalid lead data\",\n  \"missing_fields\": $json.validation.errors,\n  \"required_fields\": [\"email\", \"name\"]\n} }}"
+      },
+      "id": "validation-error",
+      "name": "Validation Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://api.clearbit.com/v2/enrichment/find",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Bearer {{ $credentials.clearbit.apiKey }}"
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "email",
+              "value": "={{ $json.validation.sanitized.email }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetween": 2000
+          }
+        }
+      },
+      "id": "enrich-lead-clearbit",
+      "name": "Enrich Lead (Clearbit)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "https://api.hunter.io/v2/email-verifier",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "queryAuth",
+        "queryAuth": {
+          "key": "api_key",
+          "value": "{{ $credentials.hunter.apiKey }}"
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "email",
+              "value": "={{ $json.validation.sanitized.email }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "verify-email-hunter",
+      "name": "Verify Email (Hunter)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "merge-data",
+              "name": "enriched_lead",
+              "value": "={{ \n  const lead = $('validate-lead').item.json.validation.sanitized;\n  const clearbit = $('enrich-lead-clearbit').item.json || {};\n  const hunter = $('verify-email-hunter').item.json || {};\n  \n  return {\n    ...lead,\n    enrichment: {\n      clearbit_available: !!clearbit.person,\n      company_domain: clearbit.company?.domain || '',\n      company_size: clearbit.company?.metrics?.employees || 0,\n      company_revenue: clearbit.company?.metrics?.estimatedAnnualRevenue || 0,\n      company_industry: clearbit.company?.category?.industry || '',\n      company_location: clearbit.company?.location?.city || '',\n      person_title: clearbit.person?.employment?.title || lead.title,\n      person_seniority: clearbit.person?.employment?.seniority || '',\n      email_deliverable: hunter.data?.result === 'deliverable',\n      email_confidence: hunter.data?.score || 0,\n      social_profiles: clearbit.person?.twitter?.handle || ''\n    },\n    lead_score: 0 // Will be calculated by AI\n  };\n}}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "merge-enrichment",
+      "name": "Merge Enrichment Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4-turbo-preview",
+        "messages": {
+          "messageType": "multipleMessages",
+          "messages": [
+            {
+              "role": "system",
+              "message": "You are an expert sales AI that scores leads and creates personalized outreach strategies.\n\nAnalyze the lead data and return ONLY valid JSON:\n{\n  \"lead_score\": number (0-100),\n  \"qualification_tier\": \"hot|warm|cold\",\n  \"persona_type\": \"decision_maker|influencer|end_user|gatekeeper\",\n  \"pain_points\": [\"pain1\", \"pain2\"],\n  \"value_propositions\": [\"value1\", \"value2\"],\n  \"personalized_subject\": \"string\",\n  \"personalized_email\": \"string\",\n  \"recommended_followup_days\": [3, 7, 14],\n  \"optimal_contact_time\": \"morning|afternoon|evening\",\n  \"confidence_score\": number (0-1),\n  \"conversion_probability\": number (0-1),\n  \"estimated_deal_size\": number,\n  \"buying_signals\": [\"signal1\", \"signal2\"],\n  \"risk_factors\": [\"risk1\", \"risk2\"]\n}\n\nBase scoring on: company size, industry, title seniority, email deliverability, data completeness."
+            },
+            {
+              "role": "user",
+              "message": "Analyze this lead profile:\n\nLead Information:\nName: {{ $json.enriched_lead.name }}\nEmail: {{ $json.enriched_lead.email }}\nCompany: {{ $json.enriched_lead.company }}\nTitle: {{ $json.enriched_lead.enrichment.person_title }}\nSeniority: {{ $json.enriched_lead.enrichment.person_seniority }}\nSource: {{ $json.enriched_lead.source }}\nUTM Campaign: {{ $json.enriched_lead.utm_campaign }}\n\nCompany Data:\nIndustry: {{ $json.enriched_lead.enrichment.company_industry }}\nSize: {{ $json.enriched_lead.enrichment.company_size }} employees\nRevenue: ${{ $json.enriched_lead.enrichment.company_revenue }}\nLocation: {{ $json.enriched_lead.enrichment.company_location }}\nDomain: {{ $json.enriched_lead.enrichment.company_domain }}\n\nEmail Verification:\nDeliverable: {{ $json.enriched_lead.enrichment.email_deliverable }}\nConfidence: {{ $json.enriched_lead.enrichment.email_confidence }}%\n\nClearbit Available: {{ $json.enriched_lead.enrichment.clearbit_available }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 1200,
+          "timeout": 30000
+        }
+      },
+      "id": "ai-lead-analysis",
+      "name": "AI Lead Scoring & Personalization",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [1340, 400],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetween": 2000
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "parse-ai-analysis",
+              "name": "analysis",
+              "value": "={{ JSON.parse($json) }}",
+              "type": "object"
+            },
+            {
+              "id": "lead-data-final",
+              "name": "final_lead",
+              "value": "={{ \n  const lead = $('merge-enrichment').item.json.enriched_lead;\n  const analysis = JSON.parse($json);\n  return {\n    ...lead,\n    lead_score: analysis.lead_score,\n    qualification_tier: analysis.qualification_tier,\n    persona_type: analysis.persona_type,\n    ai_analysis: analysis\n  };\n}}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "process-analysis",
+      "name": "Process AI Analysis",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "insert",
+        "schema": {
+          "object": {
+            "lead_id": "={{ $json.final_lead.lead_id }}",
+            "name": "={{ $json.final_lead.name }}",
+            "email": "={{ $json.final_lead.email }}",
+            "company": "={{ $json.final_lead.company }}",
+            "title": "={{ $json.final_lead.enrichment.person_title }}",
+            "source": "={{ $json.final_lead.source }}",
+            "lead_score": "={{ $json.final_lead.lead_score }}",
+            "qualification_tier": "={{ $json.final_lead.qualification_tier }}",
+            "persona_type": "={{ $json.final_lead.persona_type }}",
+            "company_size": "={{ $json.final_lead.enrichment.company_size }}",
+            "company_revenue": "={{ $json.final_lead.enrichment.company_revenue }}",
+            "email_deliverable": "={{ $json.final_lead.enrichment.email_deliverable }}",
+            "confidence_score": "={{ $json.final_lead.ai_analysis.confidence_score }}",
+            "conversion_probability": "={{ $json.final_lead.ai_analysis.conversion_probability }}",
+            "estimated_deal_size": "={{ $json.final_lead.ai_analysis.estimated_deal_size }}",
+            "status": "new",
+            "created_at": "={{ $json.final_lead.created_at }}",
+            "next_followup": "={{ new Date(Date.now() + $json.final_lead.ai_analysis.recommended_followup_days[0] * 24 * 60 * 60 * 1000).toISOString() }}"
+          }
+        }
+      },
+      "id": "store-lead",
+      "name": "Store Lead in CRM",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1560, 500],
+      "retryOnFail": true,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "hot-lead",
+              "leftValue": "={{ $json.final_lead.qualification_tier }}",
+              "rightValue": "hot",
+              "operator": "equal"
+            },
+            {
+              "id": "warm-lead",
+              "leftValue": "={{ $json.final_lead.qualification_tier }}",
+              "rightValue": "warm",
+              "operator": "equal"
+            },
+            {
+              "id": "cold-lead",
+              "leftValue": "={{ $json.final_lead.qualification_tier }}",
+              "rightValue": "cold",
+              "operator": "equal"
+            }
+          ],
+          "combineOperation": "any"
+        }
+      },
+      "id": "lead-router",
+      "name": "Lead Qualification Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "fromEmail": "sales@yourcompany.com",
+        "toEmail": "={{ $json.final_lead.email }}",
+        "subject": "={{ $json.final_lead.ai_analysis.personalized_subject }}",
+        "message": "{{ $json.final_lead.ai_analysis.personalized_email }}\n\n---\nBest regards,\nSales Team\n\nP.S. This message was personalized using AI based on your company profile and industry insights.",
+        "options": {
+          "priority": "high"
+        }
+      },
+      "id": "send-hot-lead-email",
+      "name": "Send Hot Lead Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2000, 320],
+      "retryOnFail": true,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "postToChannel",
+        "channel": "#sales-hot-leads",
+        "text": "🔥 *HOT LEAD ALERT* 🔥\n\n👤 *Lead Details:*\n• Name: {{ $json.final_lead.name }}\n• Company: {{ $json.final_lead.company }}\n• Title: {{ $json.final_lead.enrichment.person_title }}\n• Email: {{ $json.final_lead.email }}\n• Score: {{ $json.final_lead.lead_score }}/100\n\n🏢 *Company Info:*\n• Industry: {{ $json.final_lead.enrichment.company_industry }}\n• Size: {{ $json.final_lead.enrichment.company_size }} employees\n• Revenue: ${{ $json.final_lead.enrichment.company_revenue?.toLocaleString() }}\n\n🎯 *AI Insights:*\n• Persona: {{ $json.final_lead.persona_type }}\n• Conversion Probability: {{ ($json.final_lead.ai_analysis.conversion_probability * 100).toFixed(1) }}%\n• Est. Deal Size: ${{ $json.final_lead.ai_analysis.estimated_deal_size?.toLocaleString() }}\n• Confidence: {{ ($json.final_lead.ai_analysis.confidence_score * 100).toFixed(0) }}%\n\n🚀 *Buying Signals:*\n{{ $json.final_lead.ai_analysis.buying_signals?.map(s => `• ${s}`).join('\\n') }}\n\n*Personalized email sent automatically!*\nLead ID: `{{ $json.final_lead.lead_id }}`"
+      },
+      "id": "hot-lead-slack-alert",
+      "name": "Hot Lead Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [2000, 380]
+    },
+    {
+      "parameters": {
+        "fromEmail": "sales@yourcompany.com",
+        "toEmail": "={{ $json.final_lead.email }}",
+        "subject": "{{ $json.final_lead.ai_analysis.personalized_subject }}",
+        "message": "{{ $json.final_lead.ai_analysis.personalized_email }}\n\n---\nBest regards,\nSales Team"
+      },
+      "id": "send-warm-lead-email",
+      "name": "Send Warm Lead Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2000, 440]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "value": "={{ $json.final_lead.ai_analysis.recommended_followup_days[0] }}"
+            }
+          ]
+        }
+      },
+      "id": "schedule-warm-followup",
+      "name": "Schedule Warm Follow-up",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [2220, 440]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "insert",
+        "schema": {
+          "object": {
+            "lead_id": "={{ $json.final_lead.lead_id }}",
+            "sequence_type": "nurture",
+            "scheduled_for": "={{ new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() }}",
+            "message_template": "cold_lead_nurture_1",
+            "status": "scheduled"
+          }
+        }
+      },
+      "id": "add-to-nurture-sequence",
+      "name": "Add to Nurture Sequence",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [2000, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": true,\n  \"message\": \"Lead processed successfully\",\n  \"lead_id\": $json.final_lead.lead_id,\n  \"lead_score\": $json.final_lead.lead_score,\n  \"qualification_tier\": $json.final_lead.qualification_tier,\n  \"persona_type\": $json.final_lead.persona_type,\n  \"conversion_probability\": $json.final_lead.ai_analysis.conversion_probability,\n  \"estimated_deal_size\": $json.final_lead.ai_analysis.estimated_deal_size,\n  \"next_action\": $json.final_lead.qualification_tier === 'hot' ? 'immediate_followup' : \n                $json.final_lead.qualification_tier === 'warm' ? 'scheduled_followup' : 'nurture_sequence'\n} }}"
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2240, 400]
+    }
+  ],
+  "connections": {
+    "webhook-lead-intake": {
+      "main": [
+        [
+          {
+            "node": "validate-lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "validate-lead": {
+      "main": [
+        [
+          {
+            "node": "validation-gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "validation-gate": {
+      "main": [
+        [
+          {
+            "node": "enrich-lead-clearbit",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "verify-email-hunter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "validation-error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "enrich-lead-clearbit": {
+      "main": [
+        [
+          {
+            "node": "merge-enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "verify-email-hunter": {
+      "main": [
+        [
+          {
+            "node": "merge-enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "merge-enrichment": {
+      "main": [
+        [
+          {
+            "node": "ai-lead-analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ai-lead-analysis": {
+      "main": [
+        [
+          {
+            "node": "process-analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "process-analysis": {
+      "main": [
+        [
+          {
+            "node": "lead-router",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "store-lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "lead-router": {
+      "main": [
+        [
+          {
+            "node": "send-hot-lead-email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "hot-lead-slack-alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "send-warm-lead-email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "schedule-warm-followup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "add-to-nurture-sequence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "send-hot-lead-email": {
+      "main": [
+        [
+          {
+            "node": "success-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "send-warm-lead-email": {
+      "main": [
+        [
+          {
+            "node": "success-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "add-to-nurture-sequence": {
+      "main": [
+        [
+          {
+            "node": "success-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-01-27T12:00:00.000Z",
+  "updatedAt": "2025-01-27T12:00:00.000Z",
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "version": "1.0.0"
+  },
+  "id": "sales-pipeline-automation-module",
+  "versionId": "1"
+}

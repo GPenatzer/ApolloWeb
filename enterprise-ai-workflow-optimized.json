@@ -1,0 +1,739 @@
+{
+  "name": "Enterprise AI Automation Master Workflow - Optimized",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "client-intake",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        },
+        "responseData": {
+          "responseContentType": "application/json"
+        }
+      },
+      "id": "webhook-client-intake",
+      "name": "Client Intake Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "client-intake-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "validate-required-fields",
+              "name": "validation_errors",
+              "value": "={{ \n  const required = ['company_name', 'industry', 'contact_name', 'email', 'challenges', 'goals'];\n  const missing = required.filter(field => !$json[field] || $json[field].toString().trim() === '');\n  return missing.length > 0 ? missing : null;\n}}",
+              "type": "array"
+            },
+            {
+              "id": "sanitized-data",
+              "name": "sanitized_input",
+              "value": "={{ {\n  company_name: $json.company_name?.toString().trim(),\n  industry: $json.industry?.toString().trim(),\n  contact_name: $json.contact_name?.toString().trim(),\n  email: $json.email?.toString().toLowerCase().trim(),\n  annual_revenue: $json.annual_revenue || 'Not specified',\n  employee_count: $json.employee_count || 'Not specified',\n  challenges: $json.challenges?.toString().trim(),\n  goals: $json.goals?.toString().trim(),\n  budget_range: $json.budget_range || 'Not specified',\n  timeline: $json.timeline || 'Not specified',\n  created_at: new Date().toISOString()\n} }}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "input-validation",
+      "name": "Input Validation & Sanitization",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validation-passed",
+              "leftValue": "={{ $json.validation_errors }}",
+              "rightValue": null,
+              "operator": "equal"
+            }
+          ],
+          "combineOperation": "any"
+        }
+      },
+      "id": "validation-check",
+      "name": "Validation Check",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": false,\n  \"error\": \"Missing required fields\",\n  \"missing_fields\": $json.validation_errors,\n  \"required_fields\": [\"company_name\", \"industry\", \"contact_name\", \"email\", \"challenges\", \"goals\"]\n} }}"
+      },
+      "id": "validation-error-response",
+      "name": "Validation Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4-turbo-preview",
+        "messages": {
+          "messageType": "multipleMessages",
+          "messages": [
+            {
+              "role": "system",
+              "message": "You are an enterprise AI consultant with expertise in automation solutions. Analyze client requirements and provide strategic recommendations.\n\nRETURN ONLY valid JSON with this exact structure:\n{\n  \"recommended_services\": [\"service1\", \"service2\"],\n  \"estimated_monthly_value\": number,\n  \"implementation_timeline\": \"string\",\n  \"key_benefits\": [\"benefit1\", \"benefit2\"],\n  \"next_steps\": [\"step1\", \"step2\"],\n  \"confidence_score\": number,\n  \"risk_factors\": [\"risk1\", \"risk2\"],\n  \"roi_projection\": {\n    \"monthly_savings\": number,\n    \"payback_period_months\": number,\n    \"annual_roi_percentage\": number\n  }\n}\n\nAvailable services: customer_service, sales_pipeline, content_generation, data_analytics, process_automation, document_processing, predictive_analytics"
+            },
+            {
+              "role": "user",
+              "message": "Analyze this client profile:\n\nCompany: {{ $json.sanitized_input.company_name }}\nIndustry: {{ $json.sanitized_input.industry }}\nRevenue: {{ $json.sanitized_input.annual_revenue }}\nEmployees: {{ $json.sanitized_input.employee_count }}\nChallenges: {{ $json.sanitized_input.challenges }}\nGoals: {{ $json.sanitized_input.goals }}\nBudget: {{ $json.sanitized_input.budget_range }}\nTimeline: {{ $json.sanitized_input.timeline }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 1000,
+          "timeout": 30000
+        }
+      },
+      "id": "ai-service-recommendation",
+      "name": "AI Service Recommendation Engine",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [900, 400],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetween": 1000
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "parse-ai-response",
+              "name": "recommendation",
+              "value": "={{ JSON.parse($json) }}",
+              "type": "object"
+            },
+            {
+              "id": "client-data",
+              "name": "client_info",
+              "value": "={{ $('input-validation').item.json.sanitized_input }}",
+              "type": "object"
+            },
+            {
+              "id": "workflow-id",
+              "name": "workflow_id",
+              "value": "={{ $workflow.id }}-{{ $runIndex }}-{{ Date.now() }}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "process-recommendation",
+      "name": "Process AI Recommendation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "customer-service",
+              "leftValue": "={{ $json.recommendation.recommended_services }}",
+              "rightValue": "customer_service",
+              "operator": "contains"
+            },
+            {
+              "id": "sales-pipeline",
+              "leftValue": "={{ $json.recommendation.recommended_services }}",
+              "rightValue": "sales_pipeline",
+              "operator": "contains"
+            },
+            {
+              "id": "content-generation",
+              "leftValue": "={{ $json.recommendation.recommended_services }}",
+              "rightValue": "content_generation",
+              "operator": "contains"
+            },
+            {
+              "id": "data-analytics",
+              "leftValue": "={{ $json.recommendation.recommended_services }}",
+              "rightValue": "data_analytics",
+              "operator": "contains"
+            },
+            {
+              "id": "process-automation",
+              "leftValue": "={{ $json.recommendation.recommended_services }}",
+              "rightValue": "process_automation",
+              "operator": "contains"
+            }
+          ],
+          "combineOperation": "any"
+        }
+      },
+      "id": "service-router",
+      "name": "Intelligent Service Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "insert",
+        "schema": {
+          "object": {
+            "client_id": "={{ $json.workflow_id }}",
+            "company_name": "={{ $json.client_info.company_name }}",
+            "industry": "={{ $json.client_info.industry }}",
+            "contact_email": "={{ $json.client_info.email }}",
+            "recommended_services": "={{ JSON.stringify($json.recommendation.recommended_services) }}",
+            "estimated_value": "={{ $json.recommendation.estimated_monthly_value }}",
+            "confidence_score": "={{ $json.recommendation.confidence_score }}",
+            "status": "proposal_sent",
+            "created_at": "={{ $json.client_info.created_at }}",
+            "roi_projection": "={{ JSON.stringify($json.recommendation.roi_projection) }}"
+          }
+        }
+      },
+      "id": "store-client-data",
+      "name": "Store Client Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1120, 500],
+      "retryOnFail": true,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "fromEmail": "proposals@yourcompany.com",
+        "toEmail": "={{ $json.client_info.email }}",
+        "subject": "🚀 Your Custom AI Automation Strategy - {{ $json.client_info.company_name }}",
+        "message": "Dear {{ $json.client_info.contact_name }},\n\nThank you for your interest in our Enterprise AI Automation services. Our AI has analyzed your requirements and created a custom strategy for {{ $json.client_info.company_name }}.\n\n🎯 RECOMMENDED AI SERVICES:\n{{ $json.recommendation.recommended_services.map(s => `• ${s.replace('_', ' ').toUpperCase()}`).join('\\n') }}\n\n💰 PROJECTED VALUE:\n• Monthly Value: ${{ $json.recommendation.estimated_monthly_value.toLocaleString() }}\n• Annual ROI: {{ $json.recommendation.roi_projection.annual_roi_percentage }}%\n• Payback Period: {{ $json.recommendation.roi_projection.payback_period_months }} months\n• Monthly Savings: ${{ $json.recommendation.roi_projection.monthly_savings.toLocaleString() }}\n\n⏱️ IMPLEMENTATION: {{ $json.recommendation.implementation_timeline }}\n\n🚀 KEY BENEFITS:\n{{ $json.recommendation.key_benefits.map(b => `• ${b}`).join('\\n') }}\n\n📈 NEXT STEPS:\n{{ $json.recommendation.next_steps.map(s => `• ${s}`).join('\\n') }}\n\n⚠️ CONSIDERATIONS:\n{{ $json.recommendation.risk_factors.map(r => `• ${r}`).join('\\n') }}\n\nConfidence Score: {{ ($json.recommendation.confidence_score * 100).toFixed(0) }}%\n\nReady to transform {{ $json.client_info.company_name }} with AI? Let's schedule a strategy call!\n\nBest regards,\nYour AI Automation Team\n\nProposal ID: {{ $json.workflow_id }}",
+        "attachments": []
+      },
+      "id": "send-enhanced-proposal",
+      "name": "Send Enhanced Proposal",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1340, 500],
+      "retryOnFail": true,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": true,\n  \"message\": \"Proposal generated and sent successfully\",\n  \"proposal_id\": $json.workflow_id,\n  \"recommended_services\": $json.recommendation.recommended_services,\n  \"estimated_monthly_value\": $json.recommendation.estimated_monthly_value,\n  \"confidence_score\": $json.recommendation.confidence_score,\n  \"next_steps\": $json.recommendation.next_steps\n} }}"
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "customer-support-v2",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true,
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "webhook-customer-support",
+      "name": "Customer Support Webhook v2",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [1560, 100],
+      "webhookId": "customer-support-webhook-v2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "extract-ticket-data",
+              "name": "ticket",
+              "value": "={{ {\n  id: $workflow.id + '-' + $runIndex + '-' + Date.now(),\n  email: $json.email?.toLowerCase()?.trim(),\n  subject: $json.subject?.trim(),\n  message: $json.message?.trim(),\n  customer_name: $json.customer_name?.trim(),\n  priority: $json.priority || 'medium',\n  created_at: new Date().toISOString(),\n  customer_history: $json.customer_history || 'No history available'\n} }}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "process-support-ticket",
+      "name": "Process Support Ticket",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1780, 100]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4-turbo-preview",
+        "messages": {
+          "messageType": "multipleMessages",
+          "messages": [
+            {
+              "role": "system",
+              "message": "You are an intelligent customer service AI assistant. Analyze support tickets and provide structured responses.\n\nRETURN ONLY valid JSON:\n{\n  \"priority\": \"high|medium|low\",\n  \"category\": \"technical|billing|general|product|account\",\n  \"sentiment\": \"positive|neutral|negative|frustrated|angry\",\n  \"requires_human\": boolean,\n  \"suggested_response\": \"string\",\n  \"escalation_reason\": \"string or null\",\n  \"confidence_score\": number,\n  \"estimated_resolution_time\": \"string\",\n  \"suggested_tags\": [\"tag1\", \"tag2\"],\n  \"urgency_level\": 1-5\n}"
+            },
+            {
+              "role": "user",
+              "message": "Analyze this support ticket:\n\nTicket ID: {{ $json.ticket.id }}\nFrom: {{ $json.ticket.email }}\nCustomer: {{ $json.ticket.customer_name }}\nSubject: {{ $json.ticket.subject }}\nMessage: {{ $json.ticket.message }}\nHistory: {{ $json.ticket.customer_history }}\nInitial Priority: {{ $json.ticket.priority }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.1,
+          "maxTokens": 800
+        }
+      },
+      "id": "ai-support-classifier-v2",
+      "name": "AI Support Classifier v2",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [2000, 100],
+      "retryOnFail": true,
+      "maxTries": 3
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "parse-analysis",
+              "name": "analysis",
+              "value": "={{ JSON.parse($json) }}",
+              "type": "object"
+            },
+            {
+              "id": "ticket-data",
+              "name": "ticket_data",
+              "value": "={{ $('process-support-ticket').item.json.ticket }}",
+              "type": "object"
+            },
+            {
+              "id": "should-escalate",
+              "name": "escalate",
+              "value": "={{ $json.analysis?.requires_human || $json.analysis?.urgency_level >= 4 || $json.analysis?.sentiment === 'angry' }}",
+              "type": "boolean"
+            }
+          ]
+        }
+      },
+      "id": "analyze-support-decision",
+      "name": "Analyze Support Decision",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2220, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "auto-resolve",
+              "leftValue": "={{ $json.escalate }}",
+              "rightValue": false,
+              "operator": "equal"
+            },
+            {
+              "id": "escalate",
+              "leftValue": "={{ $json.escalate }}",
+              "rightValue": true,
+              "operator": "equal"
+            }
+          ],
+          "combineOperation": "any"
+        }
+      },
+      "id": "support-decision-v2",
+      "name": "Support Decision v2",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [2440, 100]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "insert",
+        "schema": {
+          "object": {
+            "ticket_id": "={{ $json.ticket_data.id }}",
+            "customer_email": "={{ $json.ticket_data.email }}",
+            "subject": "={{ $json.ticket_data.subject }}",
+            "priority": "={{ $json.analysis.priority }}",
+            "category": "={{ $json.analysis.category }}",
+            "sentiment": "={{ $json.analysis.sentiment }}",
+            "status": "auto_resolved",
+            "resolution_time": "={{ $json.analysis.estimated_resolution_time }}",
+            "confidence_score": "={{ $json.analysis.confidence_score }}",
+            "created_at": "={{ $json.ticket_data.created_at }}"
+          }
+        }
+      },
+      "id": "log-auto-resolution",
+      "name": "Log Auto Resolution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [2660, 60]
+    },
+    {
+      "parameters": {
+        "fromEmail": "support@yourcompany.com",
+        "toEmail": "={{ $json.ticket_data.email }}",
+        "subject": "✅ Resolved: {{ $json.ticket_data.subject }} [#{{ $json.ticket_data.id.split('-')[2] }}]",
+        "message": "Dear {{ $json.ticket_data.customer_name || 'Valued Customer' }},\n\nThank you for contacting our support team. We've analyzed your request and are pleased to provide you with a solution.\n\n📋 TICKET DETAILS:\n• Ticket ID: {{ $json.ticket_data.id }}\n• Priority: {{ $json.analysis.priority.toUpperCase() }}\n• Category: {{ $json.analysis.category.toUpperCase() }}\n• Estimated Resolution Time: {{ $json.analysis.estimated_resolution_time }}\n\n💡 SOLUTION:\n{{ $json.analysis.suggested_response }}\n\nIf this doesn't fully resolve your issue or you have additional questions, please reply to this email and we'll escalate your case to a human agent immediately.\n\nWe appreciate your business!\n\nBest regards,\nAI Support Team\n\nConfidence Score: {{ ($json.analysis.confidence_score * 100).toFixed(0) }}%\nTags: {{ $json.analysis.suggested_tags.join(', ') }}"
+      },
+      "id": "send-auto-response-v2",
+      "name": "Send Auto Response v2",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2660, 120]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "insert",
+        "schema": {
+          "object": {
+            "ticket_id": "={{ $json.ticket_data.id }}",
+            "customer_email": "={{ $json.ticket_data.email }}",
+            "subject": "={{ $json.ticket_data.subject }}",
+            "priority": "={{ $json.analysis.priority }}",
+            "category": "={{ $json.analysis.category }}",
+            "sentiment": "={{ $json.analysis.sentiment }}",
+            "status": "escalated",
+            "escalation_reason": "={{ $json.analysis.escalation_reason }}",
+            "urgency_level": "={{ $json.analysis.urgency_level }}",
+            "created_at": "={{ $json.ticket_data.created_at }}"
+          }
+        }
+      },
+      "id": "log-escalation",
+      "name": "Log Escalation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [2660, 180]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "postToChannel",
+        "channel": "#support-escalations",
+        "text": "🚨 HIGH PRIORITY SUPPORT ESCALATION 🚨\n\n📋 *Ticket Details:*\n• ID: `{{ $json.ticket_data.id }}`\n• Customer: {{ $json.ticket_data.customer_name }}\n• Email: {{ $json.ticket_data.email }}\n• Priority: *{{ $json.analysis.priority.toUpperCase() }}*\n• Urgency: {{ $json.analysis.urgency_level }}/5\n• Category: {{ $json.analysis.category }}\n• Sentiment: {{ $json.analysis.sentiment }}\n\n💬 *Subject:* {{ $json.ticket_data.subject }}\n\n🤖 *AI Analysis:*\n• Confidence: {{ ($json.analysis.confidence_score * 100).toFixed(0) }}%\n• Escalation Reason: {{ $json.analysis.escalation_reason }}\n• Est. Resolution Time: {{ $json.analysis.estimated_resolution_time }}\n\n📄 *Original Message:*\n```{{ $json.ticket_data.message }}```\n\n🏷️ *Tags:* {{ $json.analysis.suggested_tags.join(', ') }}\n\n*Please assign an agent immediately!*"
+      },
+      "id": "slack-escalation-alert",
+      "name": "Slack Escalation Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [2660, 240]
+    },
+    {
+      "parameters": {
+        "fromEmail": "escalations@yourcompany.com",
+        "toEmail": "support-manager@yourcompany.com",
+        "subject": "🚨 URGENT: Support Escalation Required - Priority {{ $json.analysis.priority.toUpperCase() }}",
+        "message": "A high-priority customer support case requires immediate human attention.\n\n🎫 TICKET INFORMATION:\n• Ticket ID: {{ $json.ticket_data.id }}\n• Customer: {{ $json.ticket_data.customer_name }}\n• Email: {{ $json.ticket_data.email }}\n• Priority Level: {{ $json.analysis.priority.toUpperCase() }}\n• Urgency Score: {{ $json.analysis.urgency_level }}/5\n• Category: {{ $json.analysis.category.toUpperCase() }}\n• Customer Sentiment: {{ $json.analysis.sentiment.toUpperCase() }}\n\n🤖 AI ANALYSIS:\n• Confidence Score: {{ ($json.analysis.confidence_score * 100).toFixed(0) }}%\n• Escalation Reason: {{ $json.analysis.escalation_reason }}\n• Estimated Resolution Time: {{ $json.analysis.estimated_resolution_time }}\n• Suggested Tags: {{ $json.analysis.suggested_tags.join(', ') }}\n\n📩 ORIGINAL REQUEST:\nSubject: {{ $json.ticket_data.subject }}\n\nMessage:\n{{ $json.ticket_data.message }}\n\n📊 CUSTOMER HISTORY:\n{{ $json.ticket_data.customer_history }}\n\n⏰ Created: {{ $json.ticket_data.created_at }}\n\nPlease assign an experienced agent to this case immediately.\n\nBest regards,\nAI Support System"
+      },
+      "id": "escalate-to-human-v2",
+      "name": "Escalate to Human v2",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2880, 180]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "value": 1
+            }
+          ]
+        }
+      },
+      "id": "support-metrics-schedule",
+      "name": "Support Metrics Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [3100, 100]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "select",
+        "query": "SELECT \n  COUNT(*) as total_tickets,\n  AVG(confidence_score) as avg_confidence,\n  COUNT(CASE WHEN status = 'auto_resolved' THEN 1 END) as auto_resolved,\n  COUNT(CASE WHEN status = 'escalated' THEN 1 END) as escalated,\n  AVG(CASE WHEN status = 'auto_resolved' THEN confidence_score END) as auto_resolve_confidence\nFROM support_tickets \nWHERE created_at >= NOW() - INTERVAL '1 hour'"
+      },
+      "id": "fetch-support-metrics",
+      "name": "Fetch Support Metrics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [3320, 100]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "postToChannel",
+        "channel": "#support-analytics",
+        "text": "📊 *Hourly Support Metrics Report*\n\n🎫 *Ticket Volume:* {{ $json[0].total_tickets }} tickets\n🤖 *Auto-Resolved:* {{ $json[0].auto_resolved }} ({{ (($json[0].auto_resolved / $json[0].total_tickets) * 100).toFixed(1) }}%)\n🚨 *Escalated:* {{ $json[0].escalated }} ({{ (($json[0].escalated / $json[0].total_tickets) * 100).toFixed(1) }}%)\n📈 *Avg AI Confidence:* {{ ($json[0].avg_confidence * 100).toFixed(1) }}%\n✅ *Auto-Resolve Confidence:* {{ ($json[0].auto_resolve_confidence * 100).toFixed(1) }}%\n\n*Time:* {{ new Date().toLocaleString() }}"
+      },
+      "id": "support-metrics-notification",
+      "name": "Support Metrics Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [3540, 100]
+    }
+  ],
+  "connections": {
+    "webhook-client-intake": {
+      "main": [
+        [
+          {
+            "node": "input-validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "input-validation": {
+      "main": [
+        [
+          {
+            "node": "validation-check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "validation-check": {
+      "main": [
+        [
+          {
+            "node": "ai-service-recommendation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "validation-error-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ai-service-recommendation": {
+      "main": [
+        [
+          {
+            "node": "process-recommendation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "process-recommendation": {
+      "main": [
+        [
+          {
+            "node": "service-router",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "store-client-data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "send-enhanced-proposal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "send-enhanced-proposal": {
+      "main": [
+        [
+          {
+            "node": "success-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "webhook-customer-support": {
+      "main": [
+        [
+          {
+            "node": "process-support-ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "process-support-ticket": {
+      "main": [
+        [
+          {
+            "node": "ai-support-classifier-v2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ai-support-classifier-v2": {
+      "main": [
+        [
+          {
+            "node": "analyze-support-decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "analyze-support-decision": {
+      "main": [
+        [
+          {
+            "node": "support-decision-v2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "support-decision-v2": {
+      "main": [
+        [
+          {
+            "node": "log-auto-resolution",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "send-auto-response-v2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "log-escalation",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "slack-escalation-alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "escalate-to-human-v2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "support-metrics-schedule": {
+      "main": [
+        [
+          {
+            "node": "fetch-support-metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "fetch-support-metrics": {
+      "main": [
+        [
+          {
+            "node": "support-metrics-notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-01-27T12:00:00.000Z",
+  "updatedAt": "2025-01-27T12:00:00.000Z",
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": {
+      "id": "error-handler-workflow"
+    }
+  },
+  "staticData": {
+    "clients": {},
+    "revenue_tracking": {
+      "total_mrr": 0,
+      "active_clients": 0,
+      "churn_rate": 0,
+      "growth_rate": 0
+    },
+    "support_metrics": {
+      "auto_resolution_rate": 0,
+      "avg_response_time": 0,
+      "customer_satisfaction": 0
+    },
+    "ai_performance": {
+      "confidence_scores": [],
+      "accuracy_rate": 0,
+      "improvement_suggestions": []
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "version": "2.0.0",
+    "optimization_notes": [
+      "Enhanced input validation and sanitization",
+      "Improved error handling with retry mechanisms",
+      "Added comprehensive logging and metrics",
+      "Implemented structured AI responses with confidence scores",
+      "Enhanced customer support with intelligent escalation",
+      "Added real-time monitoring and alerting",
+      "Improved database integration for tracking",
+      "Better separation of concerns with modular design"
+    ]
+  },
+  "id": "enterprise-ai-automation-workflow-v2",
+  "versionId": "2"
+}
